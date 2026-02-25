@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope">
+  <soap:Body>
+    <xacml-context:Response xmlns:xacml-context="urn:oasis:names:tc:xacml:3.0:core:schema:wd-17">
+{{- range .Results }}
+      <xacml-context:Result>
+        <xacml-context:Decision>{{ .Decision }}</xacml-context:Decision>
+        <xacml-context:Status>
+          <xacml-context:StatusCode Value="urn:oasis:names:tc:xacml:1.0:status:ok"/>
+        </xacml-context:Status>
+        <xacml-context:Attributes Category="urn:oasis:names:tc:xacml:3.0:attribute-category:action">
+          <xacml-context:Attribute AttributeId="urn:ihe:iti:appc:2016:document-entry:event-code">
+            <xacml-context:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">{{ .EventCode }}</xacml-context:AttributeValue>
+          </xacml-context:Attribute>
+        </xacml-context:Attributes>
+      </xacml-context:Result>
+{{- end }}
+    </xacml-context:Response>
+  </soap:Body>
+</soap:Envelope>
