@@ -3,8 +3,18 @@ package parser
 import (
 	"encoding/xml"
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+// boolAttrRe matches HTML-style boolean attributes (e.g. IncludeInResult>) that lack a value,
+// which are invalid in XML. We normalise them to IncludeInResult="true"> so Go's strict
+// encoding/xml parser can handle them.
+var boolAttrRe = regexp.MustCompile(`(\s)(IncludeInResult)([\s/>])`)
+
+func sanitizeXML(body []byte) []byte {
+	return boolAttrRe.ReplaceAll(body, []byte(`${1}${2}="true"${3}`))
+}
 
 // XACMLRequest holds the extracted fields from a SOAP/XACML authorization query.
 type XACMLRequest struct {
@@ -50,7 +60,7 @@ type xacmlAttribute struct {
 // ParseXACMLRequest extracts the patient BSN and gegevenscategorieen from an XACML request body.
 func ParseXACMLRequest(body []byte) (*XACMLRequest, error) {
 	var env xacmlEnvelope
-	if err := xml.Unmarshal(body, &env); err != nil {
+	if err := xml.Unmarshal(sanitizeXML(body), &env); err != nil {
 		return nil, fmt.Errorf("failed to parse XACML request: %w", err)
 	}
 
@@ -67,7 +77,12 @@ func ParseXACMLRequest(body []byte) (*XACMLRequest, error) {
 		case strings.HasSuffix(attrs.Category, ":action"):
 			for _, attr := range attrs.Attribute {
 				if strings.HasSuffix(attr.AttributeId, "event-code") {
-					req.Categories = append(req.Categories, strings.TrimSpace(attr.AttributeValue))
+					val := strings.TrimSpace(attr.AttributeValue)
+					// Strip OID prefix (e.g. "2.16.840.1.113883.2.4.3.111.5.10.1^1" → "1")
+					if idx := strings.LastIndex(val, "^"); idx >= 0 {
+						val = val[idx+1:]
+					}
+					req.Categories = append(req.Categories, val)
 				}
 			}
 		}
