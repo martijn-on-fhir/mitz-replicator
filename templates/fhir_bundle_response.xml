@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Bundle xmlns="http://hl7.org/fhir">
+  <id value="{{ .BundleID }}"/>
+  <type value="transaction-response"/>
+{{- range .Entries }}
+  <entry>
+    <response>
+      <status value="{{ .Status }}"/>
+      <location value="{{ .Location }}"/>
+    </response>
+  </entry>
+{{- end }}
+</Bundle>

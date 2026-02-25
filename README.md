@@ -4,13 +4,27 @@ A lightweight Go (Gin) HTTPS server that mimics the VZVZ Mitz consent register f
 
 ## Endpoints
 
+### SOAP Endpoints
+
 | Method | Path     | Purpose                                      |
 |--------|----------|----------------------------------------------|
 | HEAD   | `/xacml` | Health-check probe (mTLS connectivity test)  |
 | POST   | `/xacml` | Gesloten autorisatievraag (XACML 3.0 / 2.0) |
 | POST   | `/xcpd`  | Open autorisatievraag (XCPD + XUA SAML)      |
 
-All POST endpoints accept and return `Content-Type: application/soap+xml; charset=utf-8`.
+SOAP endpoints accept and return `Content-Type: application/soap+xml; charset=utf-8`.
+
+### FHIR Endpoints
+
+| Method | Path                                     | Purpose                                      |
+|--------|------------------------------------------|----------------------------------------------|
+| POST   | `/fhir/Subscription`                     | Create consent subscription (OTV-TR-0120)    |
+| DELETE | `/fhir/Subscription/:id`                 | Cancel subscription (OTV-TR-0130)            |
+| POST   | `/fhir/`                                 | Bundle transaction — migration (OTV-TR-0150) or toestemmingsknop (OTV-TR-0160) |
+| GET    | `/fhir/Subscription/$processingStatus`   | Query Subscription processing status         |
+| GET    | `/fhir/Consent/$processingStatus`        | Query Consent processing status              |
+
+FHIR endpoints accept and return `Content-Type: application/fhir+xml; charset=utf-8`.
 
 ## Quick Start
 
@@ -62,6 +76,8 @@ MTLS_ENABLED=true go run main.go
 
 ## BSN-Based Mock Routing
 
+### SOAP Endpoints
+
 The server routes responses based on the patient BSN extracted from the request:
 
 | BSN         | `/xacml` Response              | `/xcpd` Response                         |
@@ -73,13 +89,37 @@ The server routes responses based on the patient BSN extracted from the request:
 | `000000005` | SOAP Fault                     | SOAP Fault                               |
 | `999*` / default | All Permit                | 1 location with huisarts + medicatie     |
 
+### FHIR Endpoints
+
+FHIR endpoints route on BSN (extracted from Subscription criteria or Bundle Patient entry):
+
+| BSN / Provider ID | Subscription (POST)       | Bundle (POST /)           | $processingStatus (GET)     |
+|--------------------|---------------------------|---------------------------|-----------------------------|
+| `000000001`        | 202 Accepted (GUID)       | 200 OK (transaction-response) | —                       |
+| `000000002`        | 202 Accepted (GUID)       | 200 OK (transaction-response) | —                       |
+| `000000003`        | 400 OperationOutcome      | 400 OperationOutcome      | Count = 5                   |
+| `000000004`        | 429 Rate Limit            | 429 Rate Limit            | Count = 42                  |
+| `000000005`        | 500 Server Error          | 500 Server Error          | 400 OperationOutcome        |
+| Default            | 202 Accepted (GUID)       | 200 OK (transaction-response) | Count = 0               |
+
+For DELETE `/fhir/Subscription/:id`:
+- `00000000-0000-0000-0000-000000000004` → 404 Not Found
+- `00000000-0000-0000-0000-000000000005` → 500 Server Error
+- Any other ID → 204 No Content
+
 ## Configuring mitz-connector
 
 Point the connector at this mock server:
 
 ```env
+# SOAP endpoints
 MITZ_ENDPOINT=https://localhost:8443/xacml
 MITZ_OPEN_ENDPOINT=https://localhost:8443/xcpd
+
+# FHIR endpoint
+MITZ_FHIR_ENDPOINT=https://localhost:8443/fhir
+
+# mTLS certificates
 MITZ_CERT_PATH=./certs/client.crt
 MITZ_KEY_PATH=./certs/client.key
 MITZ_CA_PATH=./certs/ca.crt
@@ -93,15 +133,21 @@ mitz-replicator/
 ├── handlers/
 │   ├── health.go        # HEAD /xacml
 │   ├── xacml.go         # POST /xacml with BSN routing
-│   └── xcpd.go          # POST /xcpd with BSN routing
+│   ├── xcpd.go          # POST /xcpd with BSN routing
+│   └── fhir.go          # FHIR endpoints with BSN routing
 ├── parser/
-│   └── request.go       # XACML + XCPD request parsing
+│   ├── request.go       # XACML + XCPD request parsing
+│   └── fhir.go          # FHIR Subscription + Bundle parsing
 ├── templates/
 │   ├── xacml_response.xml
 │   ├── xacml_fault.xml
 │   ├── xcpd_found.xml
 │   ├── xcpd_empty.xml
-│   └── xcpd_fault.xml
+│   ├── xcpd_fault.xml
+│   ├── fhir_subscription.xml
+│   ├── fhir_bundle_response.xml
+│   ├── fhir_processing_status.xml
+│   └── fhir_operation_outcome.xml
 ├── certs/
 │   ├── generate.sh      # Certificate generation script
 │   └── .gitignore
@@ -172,4 +218,70 @@ curl -sk -X POST https://localhost:8443/xcpd \
     </PRPA_IN201305UV02>
   </soap:Body>
 </soap:Envelope>'
+```
+
+### FHIR — Create Subscription (OTV-TR-0120)
+
+```bash
+curl -sk -X POST https://localhost:8443/fhir/Subscription \
+  -H "Content-Type: application/fhir+xml; charset=utf-8" \
+  -H "X-Request-Id: test-003" \
+  -H "Authorization: SAML dGVzdA==" \
+  -d '<?xml version="1.0" encoding="UTF-8"?>
+<Subscription xmlns="http://hl7.org/fhir">
+  <status value="requested"/>
+  <criteria value="Consent?_query=otv&amp;patientid=000000001&amp;providerid=12345678&amp;providertype=Z3"/>
+  <channel>
+    <type value="rest-hook"/>
+    <endpoint value="https://my-system.example.com/fhir/notificatie"/>
+    <payload value="application/fhir+xml"/>
+  </channel>
+</Subscription>'
+```
+
+### FHIR — Cancel Subscription (OTV-TR-0130)
+
+```bash
+curl -sk -X DELETE https://localhost:8443/fhir/Subscription/some-guid-here \
+  -H "X-Request-Id: test-004" \
+  -H "Authorization: SAML dGVzdA=="
+```
+
+### FHIR — Bundle Transaction (migration or toestemmingsknop)
+
+```bash
+curl -sk -X POST https://localhost:8443/fhir/ \
+  -H "Content-Type: application/fhir+xml; charset=utf-8" \
+  -H "X-Request-Id: test-005" \
+  -H "Authorization: SAML dGVzdA==" \
+  -d '<?xml version="1.0" encoding="UTF-8"?>
+<Bundle xmlns="http://hl7.org/fhir">
+  <type value="transaction"/>
+  <entry>
+    <resource>
+      <Patient>
+        <identifier>
+          <system value="http://fhir.nl/fhir/NamingSystem/bsn"/>
+          <value value="000000001"/>
+        </identifier>
+        <birthDate value="1990-01-01"/>
+      </Patient>
+    </resource>
+  </entry>
+  <entry>
+    <resource>
+      <Consent>
+        <status value="active"/>
+      </Consent>
+    </resource>
+  </entry>
+</Bundle>'
+```
+
+### FHIR — Query Processing Status
+
+```bash
+curl -sk https://localhost:8443/fhir/Subscription/\$processingStatus?providerid=12345678 \
+  -H "X-Request-Id: test-006" \
+  -H "Authorization: SAML dGVzdA=="
 ```

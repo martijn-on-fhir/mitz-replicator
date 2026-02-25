@@ -31,9 +31,20 @@ func main() {
 	router := gin.Default()
 	router.Use(requestLogger())
 
+	// SOAP endpoints
 	router.HEAD("/xacml", handlers.HealthCheck)
 	router.POST("/xacml", handlers.HandleXACML)
 	router.POST("/xcpd", handlers.HandleXCPD)
+
+	// FHIR endpoints (configure MITZ_FHIR_ENDPOINT=https://localhost:8443/fhir)
+	fhir := router.Group("/fhir")
+	{
+		fhir.POST("/Subscription", handlers.HandleFhirSubscriptionCreate)
+		fhir.DELETE("/Subscription/:id", handlers.HandleFhirSubscriptionDelete)
+		fhir.GET("/Subscription/$processingStatus", handlers.HandleFhirProcessingStatus)
+		fhir.GET("/Consent/$processingStatus", handlers.HandleFhirProcessingStatus)
+		fhir.POST("/", handlers.HandleFhirBundle)
+	}
 
 	// Configure TLS
 	tlsConfig := &tls.Config{
@@ -63,9 +74,16 @@ func main() {
 	}
 
 	log.Printf("Mitz Replicator starting on https://localhost:%s", port)
-	log.Printf("  HEAD /xacml  — health check")
-	log.Printf("  POST /xacml  — gesloten autorisatievraag")
-	log.Printf("  POST /xcpd   — open autorisatievraag")
+	log.Printf("  SOAP endpoints:")
+	log.Printf("    HEAD /xacml  — health check")
+	log.Printf("    POST /xacml  — gesloten autorisatievraag")
+	log.Printf("    POST /xcpd   — open autorisatievraag")
+	log.Printf("  FHIR endpoints:")
+	log.Printf("    POST   /fhir/Subscription              — create subscription (OTV-TR-0120)")
+	log.Printf("    DELETE /fhir/Subscription/:id           — cancel subscription (OTV-TR-0130)")
+	log.Printf("    POST   /fhir/                           — Bundle transaction (OTV-TR-0150/0160)")
+	log.Printf("    GET    /fhir/Subscription/$processingStatus — query processing status")
+	log.Printf("    GET    /fhir/Consent/$processingStatus      — query processing status")
 
 	if err := server.ListenAndServeTLS(serverCert, serverKey); err != nil {
 		log.Fatalf("Server failed: %v", err)
@@ -81,6 +99,12 @@ func initTemplates() {
 	xcpdEmpty := mustReadTemplate("templates/xcpd_empty.xml")
 	xcpdFault := mustReadTemplate("templates/xcpd_fault.xml")
 	handlers.InitXCPDTemplates(xcpdFound, xcpdEmpty, xcpdFault)
+
+	fhirSubscription := mustReadTemplate("templates/fhir_subscription.xml")
+	fhirBundleResponse := mustReadTemplate("templates/fhir_bundle_response.xml")
+	fhirProcessingStatus := mustReadTemplate("templates/fhir_processing_status.xml")
+	fhirOperationOutcome := mustReadTemplate("templates/fhir_operation_outcome.xml")
+	handlers.InitFhirTemplates(fhirSubscription, fhirBundleResponse, fhirProcessingStatus, fhirOperationOutcome)
 }
 
 func mustReadTemplate(path string) string {
