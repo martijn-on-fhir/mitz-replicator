@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"mitz-replicator/auth"
 	"mitz-replicator/parser"
 )
 
@@ -57,6 +59,16 @@ var (
 	fhirProcessingStatusTmpl *template.Template
 	fhirOperationOutcomeTmpl *template.Template
 )
+
+// --- SAML validator ---
+
+var samlValidator *auth.SamlValidator
+
+// InitSamlValidator sets the SAML validator for handler-level checks.
+func InitSamlValidator(v *auth.SamlValidator) {
+
+	samlValidator = v
+}
 
 // InitFhirTemplates loads the FHIR response templates.
 func InitFhirTemplates(subscriptionXML, bundleResponseXML, processingStatusXML, operationOutcomeXML string) {
@@ -188,6 +200,15 @@ func HandleFhirBundle(c *gin.Context) {
 	}
 	log.Printf("[FHIR] POST / Bundle RequestId=%s BSN=%s Type=%s Entries=%d",
 		requestID, req.BSN, txType, req.EntryCount)
+
+	// SAML validation for migration bundles (OTV-TR-0150); toestemmingsknop uses Bearer JWT
+	if txType == "migration" && samlValidator != nil && samlValidator.IsEnabled() {
+		if err := samlValidator.ValidateFromHeader(c.GetHeader("Authorization")); err != nil {
+			renderFhirError(c, http.StatusUnauthorized, "error", "security",
+				fmt.Sprintf("SAML validation failed: %v", err))
+			return
+		}
+	}
 
 	// BSN-based routing
 	switch req.BSN {

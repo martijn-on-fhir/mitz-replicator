@@ -7,10 +7,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"mitz-replicator/auth"
 	"mitz-replicator/handlers"
 )
 
@@ -23,6 +25,38 @@ func main() {
 	serverKey := getEnv("SERVER_KEY", "certs/server.key")
 	caCert := getEnv("CA_CERT", "certs/ca.crt")
 	mtlsEnabled := getEnv("MTLS_ENABLED", "false")
+
+	// SAML validation config
+	samlEnabled := getEnv("SAML_VALIDATION_ENABLED", "false") == "true"
+	samlCertPath := getEnv("SAML_SIGNING_CERT", "certs/client.crt")
+	samlExpectedIssuer := getEnv("SAML_EXPECTED_ISSUER", "")
+	samlClockSkewSec, _ := strconv.Atoi(getEnv("SAML_CLOCK_SKEW_SECONDS", "5"))
+
+	var samlValidator *auth.SamlValidator
+	if samlEnabled {
+		certPEM, err := os.ReadFile(samlCertPath)
+		if err != nil {
+			log.Fatalf("Failed to read SAML signing certificate %s: %v", samlCertPath, err)
+		}
+
+		samlValidator, err = auth.NewSamlValidator(auth.SamlValidatorConfig{
+			Enabled:        true,
+			SigningCert:    certPEM,
+			ExpectedIssuer: samlExpectedIssuer,
+			ClockSkew:      time.Duration(samlClockSkewSec) * time.Second,
+		})
+		if err != nil {
+			log.Fatalf("Failed to create SAML validator: %v", err)
+		}
+
+		log.Printf("SAML validation enabled — cert=%s issuer=%q clockSkew=%ds",
+			samlCertPath, samlExpectedIssuer, samlClockSkewSec)
+	} else {
+		samlValidator, _ = auth.NewSamlValidator(auth.SamlValidatorConfig{Enabled: false})
+		log.Println("SAML validation disabled — FHIR endpoints accept any Authorization header")
+	}
+
+	handlers.InitSamlValidator(samlValidator)
 
 	// Load embedded templates
 	initTemplates()
@@ -39,11 +73,11 @@ func main() {
 	// FHIR endpoints (configure MITZ_FHIR_ENDPOINT=https://localhost:8443/fhir)
 	fhir := router.Group("/fhir")
 	{
-		fhir.POST("/Subscription", handlers.HandleFhirSubscriptionCreate)
-		fhir.DELETE("/Subscription/:id", handlers.HandleFhirSubscriptionDelete)
+		fhir.POST("/Subscription", auth.SamlAuthMiddleware(samlValidator), handlers.HandleFhirSubscriptionCreate)
+		fhir.DELETE("/Subscription/:id", auth.SamlAuthMiddleware(samlValidator), handlers.HandleFhirSubscriptionDelete)
 		fhir.GET("/Subscription/$processingStatus", handlers.HandleFhirProcessingStatus)
 		fhir.GET("/Consent/$processingStatus", handlers.HandleFhirProcessingStatus)
-		fhir.POST("/", handlers.HandleFhirBundle)
+		fhir.POST("/", handlers.HandleFhirBundle) // SAML checked inside handler (migration only)
 	}
 
 	// Configure TLS

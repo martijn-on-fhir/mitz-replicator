@@ -96,9 +96,9 @@ type fhirResourceXML struct {
 	Organization *fhirAnyXML     `xml:"Organization"`
 }
 
-// fhirAnyXML is a placeholder for any FHIR resource we only need to detect.
+// fhirAnyXML is a placeholder for any FHIR resource we only need to detect (presence check).
 type fhirAnyXML struct {
-	XMLName xml.Name `xml:",any"`
+	XMLName xml.Name
 }
 
 type fhirPatientXML struct {

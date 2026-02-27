@@ -74,6 +74,49 @@ Example with mTLS enabled:
 MTLS_ENABLED=true go run main.go
 ```
 
+## SAML Assertion Validation
+
+The replicator can validate `Authorization: SAML <base64>` headers sent by the connector on FHIR endpoints, catching bugs in the connector's SAML implementation during local testing.
+
+### Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `SAML_VALIDATION_ENABLED` | `false` | Toggle SAML assertion validation on FHIR endpoints |
+| `SAML_SIGNING_CERT` | `certs/client.crt` | PEM certificate for XML-DSig signature verification |
+| `SAML_EXPECTED_ISSUER` | _(empty = skip)_ | Expected SAML Issuer value (empty skips check) |
+| `SAML_CLOCK_SKEW_SECONDS` | `5` | Allowed clock skew in seconds for temporal checks |
+
+### Protected Endpoints
+
+When `SAML_VALIDATION_ENABLED=true`:
+
+| Endpoint | Transaction | Validation |
+|---|---|---|
+| `POST /fhir/Subscription` | OTV-TR-0120 | Middleware — checked before handler |
+| `DELETE /fhir/Subscription/:id` | OTV-TR-0130 | Middleware — checked before handler |
+| `POST /fhir/` (migration bundle) | OTV-TR-0150 | Handler-level — checked after body parsing |
+| `POST /fhir/` (toestemmingsknop bundle) | OTV-TR-0160 | **Not checked** — uses Bearer JWT |
+
+Migration vs toestemmingsknop bundles are distinguished by the presence of a `Provenance` resource in the bundle entries.
+
+### Validation Checks
+
+1. **XML-DSig signature** — verifies the enveloped signature using the configured PEM certificate via `goxmldsig`
+2. **Issuer** — if `SAML_EXPECTED_ISSUER` is set, verifies the `<saml:Issuer>` element matches
+3. **Temporal conditions** — checks `<saml:Conditions>` `NotBefore` and `NotOnOrAfter` attributes with clock skew tolerance
+
+Failed validation returns HTTP 401 with a FHIR `OperationOutcome` containing the error details.
+
+### Example
+
+```bash
+SAML_VALIDATION_ENABLED=true \
+SAML_SIGNING_CERT=C:/private/mitz-connector/certs/certificate.crt \
+SAML_EXPECTED_ISSUER=mitz-connector \
+go run main.go
+```
+
 ## BSN-Based Mock Routing
 
 ### SOAP Endpoints
@@ -116,13 +159,18 @@ Point the connector at this mock server:
 MITZ_ENDPOINT=https://localhost:8443/xacml
 MITZ_OPEN_ENDPOINT=https://localhost:8443/xcpd
 
-# FHIR endpoint
+# FHIR endpoints
 MITZ_FHIR_ENDPOINT=https://localhost:8443/fhir
+MITZ_OTV_FHIR_ENDPOINT=https://localhost:8443/fhir
+MITZ_FHIR_MTLS_ENABLED=true
 
 # mTLS certificates
 MITZ_CERT_PATH=./certs/client.crt
 MITZ_KEY_PATH=./certs/client.key
 MITZ_CA_PATH=./certs/ca.crt
+
+# SAML auth for OTV-TR-0120/0130/0150
+MITZ_FHIR_SAML_AUTH_ENABLED=true
 ```
 
 ## Project Structure
@@ -130,6 +178,8 @@ MITZ_CA_PATH=./certs/ca.crt
 ```
 mitz-replicator/
 ├── main.go              # Gin server, TLS config, template loading
+├── auth/
+│   └── saml.go          # SAML assertion validator + Gin middleware
 ├── handlers/
 │   ├── health.go        # HEAD /xacml
 │   ├── xacml.go         # POST /xacml with BSN routing
@@ -282,6 +332,5 @@ curl -sk -X POST https://localhost:8443/fhir/ \
 
 ```bash
 curl -sk https://localhost:8443/fhir/Subscription/\$processingStatus?providerid=12345678 \
-  -H "X-Request-Id: test-006" \
-  -H "Authorization: SAML dGVzdA=="
+  -H "X-Request-Id: test-006"
 ```
