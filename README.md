@@ -28,34 +28,7 @@ FHIR endpoints accept and return `Content-Type: application/fhir+xml; charset=ut
 
 ## Quick Start
 
-### Option A: Docker (recommended)
-
-```bash
-docker compose up --build
-```
-
-This builds the image, generates TLS certificates, and starts the server on `https://localhost:8443`. No local Go installation required.
-
-To run in the background:
-
-```bash
-docker compose up -d
-docker compose logs -f   # follow logs
-docker compose down      # stop
-```
-
-To use your own certificates, uncomment the `volumes` section in `docker-compose.yml`:
-
-```yaml
-volumes:
-  - ./certs:/app/certs:ro
-```
-
-Environment variables can be configured in the `environment` section of `docker-compose.yml`.
-
-### Option B: Local Go
-
-#### 1. Generate certificates
+### 1. Generate certificates
 
 ```bash
 cd certs
@@ -65,7 +38,7 @@ cd ..
 
 This creates a self-signed CA, server certificate (CN=localhost with SAN), and client certificate (CN=mitz-connector).
 
-#### 2. Run the server
+### 2. Run the server
 
 ```bash
 go run main.go
@@ -228,9 +201,6 @@ mitz-replicator/
 ├── certs/
 │   ├── generate.sh      # Certificate generation script
 │   └── .gitignore
-├── Dockerfile           # Multi-stage Docker build
-├── docker-compose.yml   # Docker Compose configuration
-├── .dockerignore
 ├── go.mod
 └── go.sum
 ```
