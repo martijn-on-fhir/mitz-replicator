@@ -1,0 +1,6 @@
+.git
+.idea
+*.exe
+certs/*.key
+certs/*.csr
+certs/*.srl
